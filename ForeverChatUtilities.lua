@@ -1,4 +1,4 @@
-local addonName, FCC = ...
+local addonName, FCU = ...
 
 -- Compatibility shims across WoW Forever (16001 / camelot), Classic Era, and Mainline
 local issecretvalue = issecretvalue or function() return false end
@@ -45,22 +45,23 @@ local CHAT_EVENTS = {
 	"CHAT_MSG_SYSTEM",
 }
 
+local URL_DIALOG_DEFAULT_HINT = "Press |cffffd100Cmd+C|r / |cffffd100Ctrl+C|r to copy & open in browser  •  |cffffd100Esc|r to cancel"
 local hookedFrames = setmetatable({}, { __mode = "k" })
 
 local function EnsureDB()
-	if type(ForeverChatCopyDB) ~= "table" then
-		ForeverChatCopyDB = {}
+	if type(ForeverChatUtilitiesDB) ~= "table" then
+		ForeverChatUtilitiesDB = {}
 	end
 	for key, defaultVal in pairs(DEFAULT_DB) do
-		if ForeverChatCopyDB[key] == nil then
-			ForeverChatCopyDB[key] = defaultVal
+		if ForeverChatUtilitiesDB[key] == nil then
+			ForeverChatUtilitiesDB[key] = defaultVal
 		end
 	end
 end
 
 local function GetURLColor()
-	if ForeverChatCopyDB and type(ForeverChatCopyDB.urlColor) == "string" and ForeverChatCopyDB.urlColor:match("^%x%x%x%x%x%x$") then
-		return ForeverChatCopyDB.urlColor
+	if ForeverChatUtilitiesDB and type(ForeverChatUtilitiesDB.urlColor) == "string" and ForeverChatUtilitiesDB.urlColor:match("^%x%x%x%x%x%x$") then
+		return ForeverChatUtilitiesDB.urlColor
 	end
 	return DEFAULT_DB.urlColor
 end
@@ -94,6 +95,21 @@ local function ExtractURLFromHyperlinkText(text)
 	cleaned = cleaned:gsub("^|H.-|h", ""):gsub("|h$", "")
 	cleaned = cleaned:match("^%[(.*)%]$") or cleaned
 	return cleaned
+end
+
+local function NormalizeWebURL(url)
+	if not url or url == "" then return url end
+	if url:match("^https?://") or url:match("^ftp://") then
+		return url
+	end
+	return "https://" .. url
+end
+
+local function ExtractDomain(url)
+	if not url or url == "" then return "External Web Page" end
+	local ipv6 = url:match("^%a+://(%[[^%]]+%])")
+	if ipv6 then return ipv6 end
+	return url:match("^%a+://([^/:%?]+)") or url:match("^([^/:%?]+)") or url
 end
 
 -- Protect existing WoW escape sequences before scanning plain text for URLs.
@@ -212,10 +228,10 @@ local function IsValidURL(candidate)
 end
 
 local function FormatURLHyperlink(url)
-	return "|cff" .. GetURLColor() .. "|Hgarrmission:FCC:|h[" .. url .. "]|h|r"
+	return "|cff" .. GetURLColor() .. "|Hgarrmission:FCU:|h[" .. url .. "]|h|r"
 end
 
-function FCC:LinkifyURLs(msg)
+function FCU:LinkifyURLs(msg)
 	if not msg or issecretvalue(msg) then return msg, false end
 	local protected, saved = ProtectEscapes(msg)
 	local changed = false
@@ -237,7 +253,7 @@ end
 
 local function URLFilter(_, _, msg, ...)
 	if not msg or issecretvalue(msg) then return end
-	local newMsg, changed = FCC:LinkifyURLs(msg)
+	local newMsg, changed = FCU:LinkifyURLs(msg)
 	if changed then
 		return false, newMsg, ...
 	end
@@ -245,36 +261,53 @@ end
 
 local function CreateURLPopup()
 	local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-	local popup = CreateFrame("Frame", "ForeverChatCopyURLPopup", UIParent, template)
-	popup:SetSize(520, 100)
-	popup:SetPoint("CENTER", UIParent, "CENTER", 0, 80)
+	local popup = CreateFrame("Frame", "ForeverChatUtilitiesURLPopup", UIParent, template)
+	popup:SetSize(540, 165)
+	popup:SetPoint("CENTER", UIParent, "CENTER", 0, 90)
 	popup:SetFrameStrata("DIALOG")
 	popup:SetFrameLevel(100)
 	popup:Hide()
+	popup.showToken = 0
 	ApplyBackdrop(popup, 0.96)
 	MakeMovable(popup)
 
 	if UISpecialFrames then
-		table.insert(UISpecialFrames, "ForeverChatCopyURLPopup")
+		table.insert(UISpecialFrames, "ForeverChatUtilitiesURLPopup")
 	end
 
 	local closeBtn = CreateFrame("Button", nil, popup, "UIPanelCloseButton")
-	closeBtn:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -3, -3)
+	closeBtn:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -4, -4)
 	closeBtn:SetScript("OnClick", function()
 		popup:Hide()
 	end)
 
-	local label = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	label:SetPoint("TOPLEFT", popup, "TOPLEFT", 16, -16)
-	label:SetPoint("RIGHT", closeBtn, "LEFT", -8, 0)
-	label:SetJustifyH("LEFT")
-	label:SetText("Press Ctrl+C (or Cmd+C) to copy link:")
-	popup.label = label
+	local warnIcon = popup:CreateTexture(nil, "ARTWORK")
+	warnIcon:SetSize(28, 28)
+	warnIcon:SetPoint("TOPLEFT", popup, "TOPLEFT", 14, -12)
+	warnIcon:SetTexture("Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew")
+
+	local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", warnIcon, "TOPRIGHT", 10, -3)
+	title:SetPoint("RIGHT", closeBtn, "LEFT", -8, 0)
+	title:SetJustifyH("LEFT")
+	title:SetText("|cffffd100Navigate to External Web Page|r")
+
+	local notice = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	notice:SetPoint("TOPLEFT", popup, "TOPLEFT", 16, -46)
+	notice:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -16, -46)
+	notice:SetJustifyH("LEFT")
+	notice:SetText("You are about to navigate to an external web page outside World of Warcraft.")
+
+	local domainText = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	domainText:SetPoint("TOPLEFT", popup, "TOPLEFT", 16, -64)
+	domainText:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -16, -64)
+	domainText:SetJustifyH("LEFT")
+	popup.domainText = domainText
 
 	local editBox = CreateFrame("EditBox", nil, popup, "InputBoxTemplate")
-	editBox:SetSize(480, 28)
-	editBox:SetPoint("BOTTOMLEFT", popup, "BOTTOMLEFT", 20, 18)
-	editBox:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -20, 18)
+	editBox:SetHeight(26)
+	editBox:SetPoint("TOPLEFT", popup, "TOPLEFT", 20, -84)
+	editBox:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -20, -84)
 	editBox:SetAutoFocus(false)
 	editBox:SetScript("OnEscapePressed", function()
 		popup:Hide()
@@ -282,25 +315,61 @@ local function CreateURLPopup()
 	editBox:SetScript("OnEnterPressed", function()
 		popup:Hide()
 	end)
+
+	local statusText = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	statusText:SetPoint("TOPLEFT", popup, "TOPLEFT", 16, -114)
+	statusText:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -16, -114)
+	statusText:SetJustifyH("LEFT")
+	statusText:SetText(URL_DIALOG_DEFAULT_HINT)
+	popup.statusText = statusText
+
+	local cancelBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+	cancelBtn:SetSize(80, 22)
+	cancelBtn:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -14, 12)
+	cancelBtn:SetText("Cancel")
+	cancelBtn:SetScript("OnClick", function()
+		popup:Hide()
+	end)
+
+	local selectBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+	selectBtn:SetSize(92, 22)
+	selectBtn:SetPoint("RIGHT", cancelBtn, "LEFT", -6, 0)
+	selectBtn:SetText("Select URL")
+	selectBtn:SetScript("OnClick", function()
+		editBox:SetFocus()
+		editBox:HighlightText(0)
+	end)
+
 	editBox:SetScript("OnKeyUp", function(self, key)
 		local isCopyKey = (key == "C" or key == "c")
 		local hasCopyModifier = IsControlKeyDown() or (IsMetaKeyDown and IsMetaKeyDown())
 		if isCopyKey and hasCopyModifier then
-			label:SetText("|cff00ff00Link copied to clipboard!|r")
+			statusText:SetText("|cff00ff00Link copied! Switch to your browser (or helper will open it automatically).|r")
 			self:HighlightText(0)
+			local activeToken = popup.showToken
+			C_Timer.After(0.4, function()
+				if popup:IsShown() and popup.showToken == activeToken then
+					popup:Hide()
+				end
+			end)
 		end
 	end)
 	popup.editBox = editBox
 
-	FCC.urlPopup = popup
+	FCU.urlPopup = popup
 	return popup
 end
 
-function FCC:ShowURLPopup(url)
+function FCU:ShowURLPopup(url)
 	if not url or url == "" then return end
 	local popup = self.urlPopup or CreateURLPopup()
-	popup.label:SetText("Press Ctrl+C (or Cmd+C) to copy link:")
-	popup.editBox:SetText(url)
+	local normalizedURL = NormalizeWebURL(url)
+	local domain = ExtractDomain(normalizedURL)
+
+	popup.showToken = popup.showToken + 1
+	popup.domainText:SetText("Destination: |cff00ccff" .. domain .. "|r")
+	popup.statusText:SetText(URL_DIALOG_DEFAULT_HINT)
+	popup.editBox:SetText(normalizedURL)
 	popup:Show()
 	popup.editBox:SetFocus()
 	popup.editBox:HighlightText(0)
@@ -340,9 +409,9 @@ local function SanitizeChatLine(helperFont, rawLine, interactiveLinks, stripColo
 	line = line:gsub("|K[^|]+|k", "[BNet]")
 
 	if interactiveLinks then
-		line = FCC:LinkifyURLs(line)
+		line = FCU:LinkifyURLs(line)
 	else
-		line = line:gsub("|Hgarrmission:FCC:|h%[(.-)%]|h", "%1")
+		line = line:gsub("|Hgarrmission:FCU:|h%[(.-)%]|h", "%1")
 		line = line:gsub("|H.-|h(.-)|h", "%1")
 	end
 
@@ -357,7 +426,7 @@ end
 
 local function UpdateCopyWindowButtons(frame)
 	EnsureDB()
-	if ForeverChatCopyDB.interactiveLinks then
+	if ForeverChatUtilitiesDB.interactiveLinks then
 		frame.modeBtn:SetText("Mode: Click Links")
 		frame.hintText:SetText("Click any link below (Shift-click to paste in chat)")
 		frame.editBox:SetHyperlinksEnabled(true)
@@ -367,7 +436,7 @@ local function UpdateCopyWindowButtons(frame)
 		frame.editBox:SetHyperlinksEnabled(false)
 	end
 
-	if ForeverChatCopyDB.stripColors then
+	if ForeverChatUtilitiesDB.stripColors then
 		frame.colorBtn:SetText("Colors: OFF")
 	else
 		frame.colorBtn:SetText("Colors: ON")
@@ -379,10 +448,10 @@ local function PopulateCopyWindow(frame)
 	if not chatFrame or not chatFrame.GetNumMessages then return end
 
 	UpdateCopyWindowButtons(frame)
-	frame.titleText:SetText("Chat Copy - " .. GetChatFrameTitle(chatFrame))
+	frame.titleText:SetText("Forever Chat Utilities - " .. GetChatFrameTitle(chatFrame))
 
-	local interactiveLinks = ForeverChatCopyDB.interactiveLinks
-	local stripColors = ForeverChatCopyDB.stripColors
+	local interactiveLinks = ForeverChatUtilitiesDB.interactiveLinks
+	local stripColors = ForeverChatUtilitiesDB.stripColors
 	local lines = {}
 	local numMessages = chatFrame:GetNumMessages()
 
@@ -416,7 +485,7 @@ end
 
 local function CreateCopyWindow()
 	local frameTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
-	local frame = CreateFrame("Frame", "ForeverChatCopyFrame", UIParent, frameTemplate)
+	local frame = CreateFrame("Frame", "ForeverChatUtilitiesFrame", UIParent, frameTemplate)
 	frame:SetSize(720, 520)
 	frame:SetPoint("CENTER", UIParent, "CENTER")
 	frame:SetFrameStrata("DIALOG")
@@ -433,7 +502,7 @@ local function CreateCopyWindow()
 	MakeMovable(frame)
 
 	if UISpecialFrames then
-		table.insert(UISpecialFrames, "ForeverChatCopyFrame")
+		table.insert(UISpecialFrames, "ForeverChatUtilitiesFrame")
 	end
 
 	local closeBtn = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -444,7 +513,7 @@ local function CreateCopyWindow()
 
 	local titleText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	titleText:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -12)
-	titleText:SetText("Chat Copy")
+	titleText:SetText("Forever Chat Utilities")
 	frame.titleText = titleText
 
 	local hintText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -453,8 +522,8 @@ local function CreateCopyWindow()
 	frame.hintText = hintText
 
 	local selectAllBtn = CreateToolbarButton(frame, 90, "Select All", function()
-		if ForeverChatCopyDB.interactiveLinks then
-			ForeverChatCopyDB.interactiveLinks = false
+		if ForeverChatUtilitiesDB.interactiveLinks then
+			ForeverChatUtilitiesDB.interactiveLinks = false
 			PopulateCopyWindow(frame)
 		end
 		frame.editBox:SetFocus()
@@ -463,14 +532,14 @@ local function CreateCopyWindow()
 	selectAllBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -36)
 
 	local modeBtn = CreateToolbarButton(frame, 130, "Mode: Copy Text", function()
-		ForeverChatCopyDB.interactiveLinks = not ForeverChatCopyDB.interactiveLinks
+		ForeverChatUtilitiesDB.interactiveLinks = not ForeverChatUtilitiesDB.interactiveLinks
 		PopulateCopyWindow(frame)
 	end)
 	modeBtn:SetPoint("LEFT", selectAllBtn, "RIGHT", 6, 0)
 	frame.modeBtn = modeBtn
 
 	local colorBtn = CreateToolbarButton(frame, 95, "Colors: ON", function()
-		ForeverChatCopyDB.stripColors = not ForeverChatCopyDB.stripColors
+		ForeverChatUtilitiesDB.stripColors = not ForeverChatUtilitiesDB.stripColors
 		PopulateCopyWindow(frame)
 	end)
 	colorBtn:SetPoint("LEFT", modeBtn, "RIGHT", 6, 0)
@@ -486,7 +555,7 @@ local function CreateCopyWindow()
 		scrollTemplate = "UIPanelScrollFrameTemplate"
 	end
 
-	local scrollFrame = CreateFrame("ScrollFrame", "ForeverChatCopyScrollFrame", frame, scrollTemplate)
+	local scrollFrame = CreateFrame("ScrollFrame", "ForeverChatUtilitiesScrollFrame", frame, scrollTemplate)
 	scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -66)
 	scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 16)
 	frame.scrollFrame = scrollFrame
@@ -509,13 +578,13 @@ local function CreateCopyWindow()
 	editBox:SetScript("OnHyperlinkClick", function(_, link, text, button)
 		if not link then return end
 		local linkType, addonTag = strsplit(":", link)
-		if linkType == "garrmission" and addonTag == "FCC" then
+		if linkType == "garrmission" and addonTag == "FCU" then
 			local url = ExtractURLFromHyperlinkText(text)
 			if url and url ~= "" then
 				if IsShiftKeyDown() and ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() then
 					ChatEdit_InsertLink(url)
 				else
-					FCC:ShowURLPopup(url)
+					FCU:ShowURLPopup(url)
 				end
 			end
 			return
@@ -528,10 +597,10 @@ local function CreateCopyWindow()
 		if not link or not GameTooltip then return end
 		local linkType, addonTag = strsplit(":", link)
 		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-		if linkType == "garrmission" and addonTag == "FCC" then
+		if linkType == "garrmission" and addonTag == "FCU" then
 			local url = ExtractURLFromHyperlinkText(text)
 			GameTooltip:AddLine(url or "Link", 0, 0.8, 1, true)
-			GameTooltip:AddLine("Click to copy URL", 1, 1, 1)
+			GameTooltip:AddLine("Click to open web navigation dialog", 1, 1, 1)
 			GameTooltip:Show()
 		elseif GameTooltip.SetHyperlink then
 			local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
@@ -550,7 +619,7 @@ local function CreateCopyWindow()
 
 	scrollFrame:SetScrollChild(editBox)
 	scrollFrame:SetScript("OnMouseDown", function()
-		if not ForeverChatCopyDB.interactiveLinks then
+		if not ForeverChatUtilitiesDB.interactiveLinks then
 			editBox:SetFocus()
 		end
 	end)
@@ -580,22 +649,27 @@ local function CreateCopyWindow()
 		frame:StopMovingOrSizing()
 	end)
 
-	FCC.copyFrame = frame
+	FCU.copyFrame = frame
 	return frame
 end
 
-function FCC:OpenCopyWindow(chatFrame, forceInteractive)
+function FCU:OpenCopyWindow(chatFrame, forceInteractive)
 	EnsureDB()
 	local targetFrame = chatFrame or SELECTED_CHAT_FRAME or DEFAULT_CHAT_FRAME
 	local frame = self.copyFrame or CreateCopyWindow()
 
 	if forceInteractive ~= nil then
-		ForeverChatCopyDB.interactiveLinks = forceInteractive
+		ForeverChatUtilitiesDB.interactiveLinks = forceInteractive
 	end
 
 	frame.activeChatFrame = targetFrame
 	PopulateCopyWindow(frame)
 	frame:Show()
+end
+
+function ForeverChatUtilities_OnAddonCompartmentClick(_, buttonName)
+	local forceInteractive = (buttonName == "RightButton")
+	FCU:OpenCopyWindow(SELECTED_CHAT_FRAME or DEFAULT_CHAT_FRAME, forceInteractive)
 end
 
 local function AttachToChatFrame(chatFrame, index)
@@ -607,7 +681,7 @@ local function AttachToChatFrame(chatFrame, index)
 	if tab and tab.HookScript then
 		tab:HookScript("OnClick", function(_, button)
 			if button == "LeftButton" and IsShiftKeyDown() then
-				FCC:OpenCopyWindow(chatFrame)
+				FCU:OpenCopyWindow(chatFrame)
 			end
 		end)
 	end
@@ -629,7 +703,7 @@ local function AttachToChatFrame(chatFrame, index)
 		self:SetAlpha(1.0)
 		if GameTooltip then
 			GameTooltip:SetOwner(self, "ANCHOR_TOP")
-			GameTooltip:AddLine("ForeverChatCopy", 0, 0.8, 1)
+			GameTooltip:AddLine("Forever Chat Utilities", 0, 0.8, 1)
 			GameTooltip:AddLine("Left-Click: Open Chat Copy Window", 1, 1, 1)
 			GameTooltip:AddLine("Right-Click: Open in Click Links Mode", 0.85, 0.85, 0.85)
 			GameTooltip:Show()
@@ -643,13 +717,13 @@ local function AttachToChatFrame(chatFrame, index)
 	end)
 	copyBtn:SetScript("OnClick", function(_, button)
 		if button == "RightButton" then
-			FCC:OpenCopyWindow(chatFrame, true)
+			FCU:OpenCopyWindow(chatFrame, true)
 			return
 		end
-		if FCC.copyFrame and FCC.copyFrame:IsShown() and FCC.copyFrame.activeChatFrame == chatFrame then
-			FCC.copyFrame:Hide()
+		if FCU.copyFrame and FCU.copyFrame:IsShown() and FCU.copyFrame.activeChatFrame == chatFrame then
+			FCU.copyFrame:Hide()
 		else
-			FCC:OpenCopyWindow(chatFrame)
+			FCU:OpenCopyWindow(chatFrame)
 		end
 	end)
 end
@@ -674,24 +748,25 @@ end
 hooksecurefunc("SetItemRef", function(link, text)
 	if not link or issecretvalue(link) then return end
 	local linkType, addonTag = strsplit(":", link)
-	if linkType == "garrmission" and addonTag == "FCC" then
+	if linkType == "garrmission" and addonTag == "FCU" then
 		local url = ExtractURLFromHyperlinkText(text)
 		if url and url ~= "" then
 			if IsShiftKeyDown() and ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() then
 				ChatEdit_InsertLink(url)
 			else
-				FCC:ShowURLPopup(url)
+				FCU:ShowURLPopup(url)
 			end
 		end
 	end
 end)
 
 -- Register slash commands
-SLASH_FOREVERCHATCOPY1 = "/chatcopy"
-SLASH_FOREVERCHATCOPY2 = "/copychat"
-SLASH_FOREVERCHATCOPY3 = "/cc"
-SlashCmdList["FOREVERCHATCOPY"] = function()
-	FCC:OpenCopyWindow(SELECTED_CHAT_FRAME or DEFAULT_CHAT_FRAME)
+SLASH_FOREVERCHATUTILITIES1 = "/fcu"
+SLASH_FOREVERCHATUTILITIES2 = "/chatcopy"
+SLASH_FOREVERCHATUTILITIES3 = "/copychat"
+SLASH_FOREVERCHATUTILITIES4 = "/cc"
+SlashCmdList["FOREVERCHATUTILITIES"] = function()
+	FCU:OpenCopyWindow(SELECTED_CHAT_FRAME or DEFAULT_CHAT_FRAME)
 end
 
 local eventFrame = CreateFrame("Frame")
