@@ -1,0 +1,9 @@
+## Interface: 16001, 16000, 11508, 11509, 20506, 120100
+## Title: ForeverChatCopy |cff00ccff(Chat Copy & Clickable Links)|r
+## Notes: Open the chat in a new window to copy text and click links posted in chat.
+## Author: danandrei
+## Version: 1.0.0
+## AllowLoadGameType: standard, camelot, classic, vanilla
+## SavedVariables: ForeverChatCopyDB
+
+ForeverChatCopy.lua
