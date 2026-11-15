@@ -54,3 +54,7 @@ Restart the client or run `/reload` in-game.
 - **Addon Compartment:** Click **Forever Chat Utilities** in the minimap Addon Compartment dropdown (`Left-Click` for Copy Text, `Right-Click` for Click Links).
 - **Chat Tab Shortcut:** `Shift + Left-Click` any chat tab (including the Combat Log or whisper tabs) to open its contents in the Chat Copy Window.
 - **Slash Commands:** `/fcu`, `/cc`, `/chatcopy`, or `/copychat` opens the Chat Copy Window for the currently active chat tab.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE). Attribution is required when reusing or redistributing this code.
